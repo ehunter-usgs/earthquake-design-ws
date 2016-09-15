@@ -14,9 +14,9 @@ describe('WebService test suite', () => {
     });
   });
 
-  describe('destroy', function () {
-    it('can be called', function () {
-      expect(function () {
+  describe('destroy', () => {
+    it('can be called', () => {
+      expect(() => {
         var obj;
 
         obj = WebService();
@@ -25,19 +25,19 @@ describe('WebService test suite', () => {
     });
   });
 
-  describe('get', function () {
+  describe('get', () => {
     var service;
 
-    beforeEach(function () {
+    beforeEach(() => {
       service = WebService();
     });
 
-    afterEach(function () {
+    afterEach(() => {
       service.destroy();
       service = null;
     });
 
-    it('calls next when no handler for method', function () {
+    it('calls next when no handler for method', () => {
       var next,
           request;
 
@@ -52,7 +52,7 @@ describe('WebService test suite', () => {
       expect(next.calledOnce).to.equal(true);
     });
 
-    it('creates handler and calls its get method', function () {
+    it('creates handler and calls its get method', () => {
       var handler,
           request;
 
@@ -66,7 +66,7 @@ describe('WebService test suite', () => {
           }
         })
       };
-      service.handlers['test handler'] = function () {
+      service.handlers['test handler'] = () => {
         return handler;
       };
       request = {
@@ -81,7 +81,7 @@ describe('WebService test suite', () => {
       expect(handler.get.calledWith(request.query)).to.equal(true);
     });
 
-    it('calls onSuccess when handler promise resolves', function (done) {
+    it('calls onSuccess when handler promise resolves', (done) => {
       var args,
           data,
           handler,
@@ -92,7 +92,7 @@ describe('WebService test suite', () => {
         destroy: sinon.spy(),
         get: sinon.stub().returns(Promise.resolve(data))
       };
-      service.handlers['test handler'] = function () {
+      service.handlers['test handler'] = () => {
         return handler;
       };
       request = {
@@ -102,7 +102,7 @@ describe('WebService test suite', () => {
         query: {}
       };
 
-      sinon.stub(service, 'onSuccess', function () {
+      sinon.stub(service, 'onSuccess', () => {
         expect(service.onSuccess.calledOnce).to.equal(true);
         args = service.onSuccess.getCall(0).args;
         expect(args[0]).to.equal(data);
@@ -113,7 +113,7 @@ describe('WebService test suite', () => {
       service.get(request);
     });
 
-    it('calls onError when handler promise rejects', function (done) {
+    it('calls onError when handler promise rejects', (done) => {
       var args,
           err,
           handler,
@@ -124,7 +124,7 @@ describe('WebService test suite', () => {
         destroy: sinon.spy(),
         get: sinon.stub().returns(Promise.reject(err))
       };
-      service.handlers['test handler'] = function () {
+      service.handlers['test handler'] = () => {
         return handler;
       };
       request = {
@@ -134,7 +134,7 @@ describe('WebService test suite', () => {
         query: {}
       };
 
-      sinon.stub(service, 'onError', function () {
+      sinon.stub(service, 'onError', () => {
         expect(service.onError.calledOnce).to.equal(true);
         args = service.onError.getCall(0).args;
         expect(args[0]).to.equal(err);
@@ -146,7 +146,7 @@ describe('WebService test suite', () => {
     });
   });
 
-  describe('getResponseMetadata', function () {
+  describe('getResponseMetadata', () => {
     it('formats the metadata response', () => {
       var metadata,
           request,
@@ -171,8 +171,8 @@ describe('WebService test suite', () => {
     });
   });
 
-  describe('onError', function () {
-    it('calls response.status with 500 error code', function () {
+  describe('onError', () => {
+    it('calls response.status with 500 error code', () => {
       var response,
           service;
 
@@ -192,8 +192,8 @@ describe('WebService test suite', () => {
     });
   });
 
-  describe('onSuccess', function () {
-    it('calls next when data is null', function () {
+  describe('onSuccess', () => {
+    it('calls next when data is null', () => {
       var next,
           service;
 
@@ -206,7 +206,7 @@ describe('WebService test suite', () => {
       service.destroy();
     });
 
-    it('calls response.json with data', function () {
+    it('calls response.json with data', () => {
       var data,
           request,
           response,
@@ -231,8 +231,8 @@ describe('WebService test suite', () => {
     });
   });
 
-  describe('setHeaders', function () {
-    it('sets headers on the response', function () {
+  describe('setHeaders', () => {
+    it('sets headers on the response', () => {
       var response,
           service;
 
