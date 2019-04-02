@@ -9,7 +9,7 @@ ON region (
 CREATE INDEX IF NOT EXISTS metadata__documentid_key_idx
 ON metadata (
   document_id,
-  key
+  modelVersion
 );
 
 CREATE INDEX IF NOT EXISTS document__regionid_name_idx
