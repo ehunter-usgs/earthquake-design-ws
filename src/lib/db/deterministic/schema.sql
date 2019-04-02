@@ -18,7 +18,7 @@ CREATE TABLE data (
   latitude NUMERIC NOT NULL,
   longitude NUMERIC NOT NULL,
   pgad NUMERIC DEFAULT NULL,
-  sa NUMERIC ARRAY DEFAULT NULL,
+  sad NUMERIC ARRAY DEFAULT NULL,
   UNIQUE (region_id, latitude, longitude)
 );
 
