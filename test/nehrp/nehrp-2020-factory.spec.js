@@ -1,7 +1,7 @@
 /* global describe, it */
 'use strict';
 
-const NEHRP2020Factory = require('../../src/lib/nehrp/nehrp-2015-factory'),
+const NEHRP2020Factory = require('../../src/lib/nehrp/nehrp-2020-factory'),
     expect = require('chai').expect;
 
 describe('nehrp-2020-factory', () => {

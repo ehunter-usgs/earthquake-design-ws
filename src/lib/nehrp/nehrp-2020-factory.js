@@ -4,7 +4,7 @@ const NSHM2014Factory = require('../basis/nshm_2014-factory'),
     extend = require('extend');
 
 const _DEFAULTS = {
-  referenceDocument: 'NEHRP-2015'
+  referenceDocument: 'NEHRP-2020'
 };
 
 /**
