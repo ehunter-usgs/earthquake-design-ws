@@ -2,8 +2,10 @@
 
 const copyFrom = require('pg-copy-streams').from,
     dbUtils = require('./db-utils'),
+    extend = require('extend'),
     inquirer = require('inquirer'),
     UrlStream = require('../util/url-stream'),
+    TransformDataStream = require('../util/transform-data-stream'),
     zlib = require('zlib');
 
 const MODE_INTERACTIVE = 'interactive';
@@ -18,8 +20,10 @@ const AbstractDataLoader = function(options) {
   _initialize = function(options) {
     options = options || {};
 
+    _this.options = options;
     _this.dataColumns = options.dataColumns;
     _this.db = options.db;
+    _this.formats = options.formats;
     _this.documents = options.documents;
     _this.indexFile = options.indexFile;
     _this.mode = options.mode;
@@ -355,141 +359,151 @@ const AbstractDataLoader = function(options) {
     promise = Promise.resolve();
 
     _this.regions.forEach(region => {
-      // run each region load in sequence
-      promise = promise.then(() => {
-        let insertData;
+      region.files.forEach(file => {
+        // run each region load in sequence
+        promise = promise.then(() => {
+          let insertData;
 
-        insertData = function() {
-          process.stderr.write('Loading ' + region.name + ' region data\n');
+          insertData = function() {
+            process.stderr.write('Loading ' + region.name + ' region data\n');
 
-          // TODO: check whether data already loaded
+            // TODO: check whether data already loaded
 
-          return dbUtils
-            .exec(_this.db, [
-              'DROP TABLE IF EXISTS temp_region_data CASCADE',
-              // create temporary table for loading data,
-              // based on actual data schema
-              'CREATE TABLE temp_region_data (LIKE data)',
-              // CSV file doesn't include "id" or "region_id" columns.
-              'ALTER TABLE temp_region_data DROP COLUMN id, DROP COLUMN region_id'
-            ])
-            .then(() => {
-              // use copy from to read data
-              return new Promise((resolve, reject) => {
-                var data, doReject, doResolve, stream;
+            return dbUtils
+              .exec(_this.db, [
+                'DROP TABLE IF EXISTS temp_region_data CASCADE',
+                // create temporary table for loading data,
+                // based on actual data schema
+                'CREATE TABLE temp_region_data (LIKE data)',
+                // CSV file doesn't include "id" or "region_id" columns.
+                'ALTER TABLE temp_region_data DROP COLUMN id, DROP COLUMN region_id'
+              ])
+              .then(() => {
+                // use copy from to read data
+                return new Promise((resolve, reject) => {
+                  var data, doReject, doResolve, stream;
 
-                data = UrlStream({
-                  url: region.url
-                });
+                  data = UrlStream({
+                    url: file.url
+                  });
 
-                stream = _this.db.query(
-                    copyFrom(
-                        `
+                  const transform = new TransformDataStream(
+                      extend({}, _this.options, { file: file })
+                  );
+
+                  stream = _this.db.query(
+                      copyFrom(
+                          `
                   COPY temp_region_data
                   FROM STDIN ` + _this.dataLoadOpts
-                    )
-                );
+                      )
+                  );
 
-                doReject = err => {
-                  data.destroy();
-                  reject(err);
-                };
+                  doReject = err => {
+                    data.destroy();
+                    reject(err);
+                  };
 
-                doResolve = () => {
-                  data.destroy();
-                  resolve();
-                };
+                  doResolve = () => {
+                    data.destroy();
+                    resolve();
+                  };
 
-                data.on('error', doReject);
-                stream.on('error', doReject);
-                stream.on('end', doResolve);
-                data.pipe(zlib.createGunzip()).pipe(stream);
-              });
-            })
-            .then(() => {
-              // transfer data into actual table
-              //nextval(pg_get_serial_sequence('data', 'id')),
-              return _this.db.query(
-                  `
-              INSERT INTO data (region_id, ${_this.dataColumns.join(', ')}) (
+                  data.on('error', doReject);
+                  stream.on('error', doReject);
+                  stream.on('end', doResolve);
+                  data
+                    .pipe(zlib.createGunzip())
+                    .pipe(transform)
+                    .pipe(stream);
+                });
+              })
+              .then(() => {
+                // transfer data into actual table
+                //nextval(pg_get_serial_sequence('data', 'id')),
+                const dataColumns = _this.formats[file.format].dataColumns;
+                return _this.db.query(
+                    `
+              INSERT INTO data (region_id, ${dataColumns.join(', ')}) (
                 SELECT
                   $1,
                   *
                   FROM temp_region_data
               )
             `,
-                  [regionIds[region.name]]
-              );
-            })
-            .then(() => {
-              // remove temporary table
-              return _this.db.query('DROP TABLE temp_region_data CASCADE');
-            });
-        };
+                    [regionIds[region.name]]
+                );
+              })
+              .then(() => {
+                // remove temporary table
+                return _this.db.query('DROP TABLE temp_region_data CASCADE');
+              });
+          };
 
-        if (_this.mode === MODE_SILENT) {
-          return insertData();
-        }
+          if (_this.mode === MODE_SILENT) {
+            return insertData();
+          }
 
-        return _this.db
-          .query(
-              `
+          return _this.db
+            .query(
+                `
           SELECT min(region_id) as region_id
           FROM data
           WHERE region_id=$1
         `,
-              [regionIds[region.name]]
-          )
-          .then(result => {
-            let regionId, skipInsertData;
+                [regionIds[region.name]]
+            )
+            .then(result => {
+              let regionId, skipInsertData;
 
-            regionId = Number(result.rows[0].region_id);
-            if (regionId !== regionIds[region.name]) {
-              // data not found
-              return insertData();
-            }
+              regionId = Number(result.rows[0].region_id);
+              if (regionId !== regionIds[region.name]) {
+                // data not found
+                return insertData();
+              }
 
-            // found existing data
-            skipInsertData = function() {
-              process.stderr.write(
-                  `Region "${region.name}" data already loaded\n`
-              );
-            };
+              // found existing data
+              skipInsertData = function() {
+                process.stderr.write(
+                    `Region "${region.name}" data already loaded\n`
+                );
+              };
 
-            if (_this.mode === MODE_MISSING) {
-              // data already exists
-              return skipInsertData();
-            } else {
-              // ask user whether to remove existing data
-              let prompt = inquirer.createPromptModule();
-              return prompt([
-                {
-                  name: 'dropData',
-                  type: 'confirm',
-                  message: `Data for region ${
-                    region.name
-                  } already exists, drop and reload data`,
-                  default: false
-                }
-              ]).then(answers => {
-                if (answers.dropData) {
-                  return _this.db
-                    .query(
-                        `
+              if (_this.mode === MODE_MISSING) {
+                // data already exists
+                return skipInsertData();
+              } else {
+                // ask user whether to remove existing data
+                let prompt = inquirer.createPromptModule();
+                return prompt([
+                  {
+                    name: 'dropData',
+                    type: 'confirm',
+                    message: `Data for region ${
+                      region.name
+                    } already exists, drop and reload data`,
+                    default: false
+                  }
+                ]).then(answers => {
+                  if (answers.dropData) {
+                    return _this.db
+                      .query(
+                          `
                   DELETE FROM data
                   WHERE id=$1
                 `,
-                        [regionId]
-                    )
-                    .then(() => {
-                      return insertData();
-                    });
-                } else {
-                  return skipInsertData();
-                }
-              });
-            }
-          });
+                          [regionId]
+                      )
+                      .then(() => {
+                        return insertData();
+                      });
+                  } else {
+                    return skipInsertData();
+                  }
+                });
+              }
+            });
+        });
       });
     });
 

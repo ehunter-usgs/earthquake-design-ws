@@ -7,8 +7,8 @@ CREATE TABLE region (
   min_latitude NUMERIC NOT NULL,
   min_longitude NUMERIC NOT NULL,
   name VARCHAR(255) NOT NULL UNIQUE,
-  periods NUMERIC ARRAY NOT NULL,
-  vs30 NUMERIC NOT NULL
+  periods NUMERIC ARRAY,
+  vs30 NUMERIC
 );
 
 CREATE TABLE data (
