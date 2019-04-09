@@ -1,7 +1,6 @@
 'use strict';
 
 var extend = require('extend'),
-    fs = require('fs'),
     stream = require('stream');
 
 /**
@@ -19,7 +18,7 @@ var TransfromDataStream = function(options) {
 
   _initialize = function(options) {
     _this.buff = [];
-    _this.data = [];
+    _this.partialRow = '';
     _this.options = extend(true, {}, options);
 
     // select format from regions.json, and column data from data loader
@@ -30,9 +29,12 @@ var TransfromDataStream = function(options) {
   };
 
   /**
-   * Close any active request and free resources.
+   * Implement stream.Destroy
+   *
+   * Destroy the stream. After this call, the transform stream would
+   * release any internal resources.
    */
-  _this.destroy = function() {
+  _this._destroy = function() {
     if (_this === null) {
       return;
     }
@@ -41,14 +43,26 @@ var TransfromDataStream = function(options) {
   };
 
   /**
+   * Implement stream.Flush
+   *
+   * Once all of the data has been read, flush the data
+   *
+   * @param callback <Function>
+   *    A callback function (optionally with an error argument
+   *    and data) to be called after the supplied chunk has been
+   *    processed.
+   */
+  _this._flush = function(callback) {
+    _this.push(_this.parseLine(_this.partialRow));
+
+    callback();
+  };
+
+  /**
    * Implement stream.Transform
    *
    * @param chunk <Buffer> | <string> | <any>
-   *    The Buffer to be transformed,
-   *    converted from the string passed to stream.write().
-   *    If the stream's decodeStrings option is false or the
-   *    stream is operating in object mode, the chunk will
-   *    not be converted & will be whatever was passed to
+   *    The Buffer to be transformed
    *    stream.write().
    * @param encoding <string>
    *    If the chunk is a string, then this is the encoding
@@ -60,81 +74,95 @@ var TransfromDataStream = function(options) {
    *    processed.
    */
   _this._transform = function(chunk, encoding, callback) {
+
     // build buffer
     if (Buffer.isBuffer(chunk)) {
       chunk = chunk.toString();
     } 
-    _this.buff.push(chunk);
 
-    // done
-    callback();
-  };
+    // prefix partial row from previous chunk
+    chunk = _this.partialRow + chunk;
 
-  /**
-   * Implement stream.Flush
-   * 
-   * @param callback <Function>
-   * A callback function (optionally with an error argument and
-   * data) to be called when remaining data has been flushed.
-   */  
-  _this._flush = function(callback) {
-    // transform and push
-    const data = _this.parseFile(_this.buff.join(''));
-    fs.writeFileSync('/tmp/datadump.sql', data);
+    // transform chunk
+    let data = _this.parseChunk(chunk);
+    if (data !== '') {
+      data += '\n';
+    }
     _this.push(data);
 
-    // destroy
-    _this.destroy();
-
     // done
     callback();
   };
 
   /**
-   * Transforms csv file into newly formatted csv string
+   * Ensure that we have a parseable line of data
+   * 
+   * @param line <string>
+   *     comma separated line of data
    *
-   * @param file string
+   * @return <boolean>
+   *     indicates parsable line of data
+   */
+  _this.isGoodLine = function(line) {
+    return line && (line.indexOf(',') !== -1);
+  };
+
+  /**
+   * Transforms csv chunk into newly formatted csv string
+   *
+   * @param chunk string
    *    csv file represented as a string
    * 
    * @return string
    *    transformed values
    */
-  _this.parseFile = function(file) {
-    const result = [];
-    const lines = file.split('\n');
+  _this.parseChunk = function(chunk) {
+    const lines = chunk.split('\n');
 
-    // build file data
-    for (let i = 0, len = lines.length; i < len; i++) {
-      result.push(this.parseLine(lines[i]));
-    }
+    this.partialRow = lines.splice(lines.length - 1, 1)[0];
 
-    return result.join('\n');
+    // filter out bad lines, parse each line int he chunk
+    return lines.filter(_this.isGoodLine)
+      .map(this.parseLine)
+      .filter(item => !!item)
+      .join('\n');
   };
 
   /**
    * Transforms each row of the csv file into the appropriate
-   * format to be inserted into a temp table format. 
+   * format to be written to the transformed CSV format
    *
    * @param line <string>
    *    one csv row
    */
   _this.parseLine = function(line) {
     // check data columns
-    const values = line.split(',');
-    let data = [];
+    try {
+      const values = line.split(',');
+      let data = [];
 
-    if (values.length === 1) {
-      return;
-    }
-
-    for (let i = 0, len = _this.csvColumns.length; i < len; i++) {
-      if (!_this.saValues.includes(_this.csvColumns[i])) {
-        data.push(values[i]);
+      if (values.length === 1) {
+        return '';
       }
-    }
-    data.push(this.parseSpectalPeriodArray(line));
 
-    return data.join(',');
+      // remove sa values from csv line
+      for (let i = 0, len = _this.csvColumns.length; i < len; i++) {
+        if (!_this.saValues.includes(_this.csvColumns[i])) {
+          const value = values[i];
+          if (value || value === 0) {
+            data.push(value);
+          } else {
+            throw new Error(_this.csvColumns[i] + ' did not have a value. \n' + line);
+          }
+        }
+      }
+      // append sa values to end of CSV as an array
+      data.push(_this.parseSpectalPeriodArray(line));
+      return data.join(',');
+    } catch (e) {
+      process.stderr.write(e.stack);
+      return '';
+    }
   };
 
   /**
@@ -147,15 +175,20 @@ var TransfromDataStream = function(options) {
     const values = line.split(',');
     let data = [];
 
+    // determine the position of the sa values and parse them from the original csv
     for (let i = 0, len = _this.saValues.length; i < len; i++) {
       const position = _this.csvColumns.indexOf(_this.saValues[i]);
-      data.push(values[position]);
+      const value = values[position];
+      if (value || value === 0) {
+        data.push(value);
+      } else {
+        throw new Error(_this.saValues[i] + ' did not have a value. \n' + line);
+      }
     }
 
+    // build csv array of sa values
     return '"{' + data.join(',') + '}"';
   };
-
-  this.get;
 
   _initialize(options);
   options = null;
